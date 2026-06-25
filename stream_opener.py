@@ -49,14 +49,30 @@ def fetch_and_schedule_events(scheduler):
                 if event.get('tag'): tags.append(event['tag'].lower())
                 if event.get('category_name'): tags.append(event['category_name'].lower())
                 
-                # Check if it matches our category tag
+                # Step 1: Extract all streams matching the target tag (e.g., fifa world cup)
                 if TARGET_TAG.lower() in tags:
-                    # STRICT FILTER: Only choose streams that have source_tag as FOX
-                    source_tag = event.get('source_tag', '').upper()
-                    if 'FOX' in source_tag:
-                        raw_target_events.append(event)
+                    is_fox = False
+                    fox_iframe = None
+                    
+                    # Check the parent stream first
+                    if 'FOX' in event.get('source_tag', '').upper():
+                        is_fox = True
+                        
+                    # Check all available substreams for a FOX broadcast
+                    for sub in event.get('substreams', []):
+                        if 'FOX' in sub.get('source_tag', '').upper():
+                            is_fox = True
+                            fox_iframe = sub.get('iframe')
+                            break # Found a FOX stream, stop searching substreams
+                            
+                    event['has_fox'] = is_fox
+                    # If we found a specific FOX iframe in a substream, overwrite the parent iframe
+                    if fox_iframe:
+                        event['iframe'] = fox_iframe
+                        
+                    raw_target_events.append(event)
         
-        # Deduplicate overlapping matches by picking the one with the highest viewers
+        # Step 2: Handle overlaps (2 streams at the same time)
         events_by_time = {}
         for event in raw_target_events:
             start_ts = event.get('starts_at')
@@ -68,15 +84,24 @@ def fetch_and_schedule_events(scheduler):
         target_events = []
         for start_ts, concurrent_events in events_by_time.items():
             if len(concurrent_events) > 1:
-                # Predict popularity by sorting by the 'viewers' metric from the API
-                concurrent_events.sort(key=lambda e: int(e.get('viewers', 0)), reverse=True)
+                # Predict popularity/preference:
+                # 1. Prefer streams with 'FOX' (either parent or substream).
+                # 2. If tied (both FOX, or neither FOX), pick the one with highest viewers.
+                concurrent_events.sort(
+                    key=lambda e: (
+                        e.get('has_fox', False), 
+                        int(e.get('viewers', 0))
+                    ), 
+                    reverse=True
+                )
                 winner = concurrent_events[0]
-                print(f"[{datetime.now()}] Conflict at {datetime.fromtimestamp(start_ts)}: {len(concurrent_events)} matches. Selected most popular: '{winner.get('name')}' with {winner.get('viewers', 0)} viewers.")
+                print(f"[{datetime.now()}] Conflict at {datetime.fromtimestamp(start_ts)}: {len(concurrent_events)} matches.")
+                print(f" - Selected: '{winner.get('name')}' (FOX: {winner.get('has_fox', False)}, Viewers: {winner.get('viewers', 0)})")
                 target_events.append(winner)
             else:
                 target_events.append(concurrent_events[0])
 
-        print(f"[{datetime.now()}] Found {len(target_events)} events matching '{TARGET_TAG}' and 'FOX' (after removing overlaps).")
+        print(f"[{datetime.now()}] Found {len(target_events)} events matching '{TARGET_TAG}' to schedule.")
         
         now = datetime.now()
 
