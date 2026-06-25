@@ -42,17 +42,41 @@ def fetch_and_schedule_events(scheduler):
         response.raise_for_status()
         data = response.json()
 
-        target_events = []
+        raw_target_events = []
         for category in data.get('streams', []):
             for event in category.get('streams', []):
                 tags = []
                 if event.get('tag'): tags.append(event['tag'].lower())
                 if event.get('category_name'): tags.append(event['category_name'].lower())
                 
+                # Check if it matches our category tag
                 if TARGET_TAG.lower() in tags:
-                    target_events.append(event)
+                    # STRICT FILTER: Only choose streams that have source_tag as FOX
+                    source_tag = event.get('source_tag', '').upper()
+                    if 'FOX' in source_tag:
+                        raw_target_events.append(event)
         
-        print(f"[{datetime.now()}] Found {len(target_events)} events matching '{TARGET_TAG}'.")
+        # Deduplicate overlapping matches by picking the one with the highest viewers
+        events_by_time = {}
+        for event in raw_target_events:
+            start_ts = event.get('starts_at')
+            if not start_ts: continue
+            if start_ts not in events_by_time:
+                events_by_time[start_ts] = []
+            events_by_time[start_ts].append(event)
+            
+        target_events = []
+        for start_ts, concurrent_events in events_by_time.items():
+            if len(concurrent_events) > 1:
+                # Predict popularity by sorting by the 'viewers' metric from the API
+                concurrent_events.sort(key=lambda e: int(e.get('viewers', 0)), reverse=True)
+                winner = concurrent_events[0]
+                print(f"[{datetime.now()}] Conflict at {datetime.fromtimestamp(start_ts)}: {len(concurrent_events)} matches. Selected most popular: '{winner.get('name')}' with {winner.get('viewers', 0)} viewers.")
+                target_events.append(winner)
+            else:
+                target_events.append(concurrent_events[0])
+
+        print(f"[{datetime.now()}] Found {len(target_events)} events matching '{TARGET_TAG}' and 'FOX' (after removing overlaps).")
         
         now = datetime.now()
 
