@@ -8,7 +8,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 API_URL = "https://api.ppv.to/api/streams"
 TARGET_TAG = "fifa world cup"
 
+opened_events = set()
+
 def open_stream(event_id, name, url):
+    if event_id in opened_events:
+        return
+        
     print(f"\n[{datetime.now()}] Opening stream for '{name}'...")
     try:
         # Open in default browser natively (avoids all profile lock issues)
@@ -21,6 +26,7 @@ def open_stream(event_id, name, url):
         screen_width, screen_height = pyautogui.size()
         pyautogui.click(screen_width / 2, screen_height / 2)
         
+        opened_events.add(event_id)
         print(f"[{datetime.now()}] Auto-clicked center of screen.")
         print(f"[{datetime.now()}] Successfully opened '{name}'.")
     except Exception as e:
